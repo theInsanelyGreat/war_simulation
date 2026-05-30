@@ -39,6 +39,16 @@ resize();
 const W=()=>canvas.width, H=()=>canvas.height;
 
 let paused=false,tick=0,selected=null,nid=0,totalSorties=0;
+const keys={};
+let controlled=null; // currently arrow-key controlled soldier
+document.addEventListener('keydown',e=>{
+  keys[e.key]=true;
+  // Deselect control on Escape
+  if(e.key==='Escape'){controlled=null;selected=null;document.getElementById('sel').style.display='none';}
+  // Prevent page scrolling with arrow keys
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
+});
+document.addEventListener('keyup',e=>{ keys[e.key]=false; });
 let soldiers=[],bullets=[],fxArr=[],planes=[],bombs=[],craters=[];
 
 const terrainImg=new Image(); terrainImg.src=TERRAIN_SRC;
@@ -229,6 +239,28 @@ function respawn(s){
   s.hp=s.mhp;s.retreating=false;s.state='advance';s.x=sp.x;s.y=sp.y;s.tx=tgt.tx;s.ty=tgt.ty;s.angle=sp.angle;s.vx=0;s.vy=0;
 }
 function updateSoldier(s){
+  // Arrow key control overrides AI movement (but not shooting)
+  if(s===controlled){
+    const CSPD=s.spd*1.1;
+    let cvx=0,cvy=0;
+    if(keys['ArrowLeft']||keys['a'])  cvx=-CSPD;
+    if(keys['ArrowRight']||keys['d']) cvx= CSPD;
+    if(keys['ArrowUp']||keys['w'])    cvy=-CSPD;
+    if(keys['ArrowDown']||keys['s'])  cvy= CSPD;
+    if(cvx!==0||cvy!==0){
+      s.vx=cvx; s.vy=cvy;
+      s.angle=Math.atan2(cvy,cvx);
+      s.x+=s.vx; s.y+=s.vy;
+      s.x=Math.max(0,Math.min(W(),s.x));
+      s.y=Math.max(0,Math.min(H(),s.y));
+      s.retreating=false; s.state='controlled';
+    }
+    // Still shoot at nearest enemy even when controlled
+    const{e,d}=nearestEnemy(s);
+    if(e&&d<150){ s.angle=Math.atan2(e.y-s.y,e.x-s.x); s.fc--; if(s.fc<=0){shoot(s,e);s.fc=s.fr;} }
+    // Still take damage (handled externally), just skip rest of AI
+    return;
+  }
   const{e,d}=nearestEnemy(s);
   if(s.hp<=22&&!s.retreating){s.retreating=true;s.state='retreat';const f=FRONTS[s.fi];if(!f.vertical){s.tx=s.faction==='blue'?-100:W()+100;s.ty=s.y;}else{s.tx=s.x;s.ty=s.faction==='blue'?-100:H()+100;}}
   if(s.retreating){const dx=s.tx-s.x,dy=s.ty-s.y,dd=Math.hypot(dx,dy)||1;s.vx=(dx/dd)*s.spd*1.5;s.vy=(dy/dd)*s.spd*1.5;s.angle=Math.atan2(dy,dx);}
@@ -462,7 +494,7 @@ function update(){
   soldiers.forEach(updateSoldier);updateBullets();updatePlanes();
   // Cap enforced at spawn, not by silent removal — nothing here
   soldiers=soldiers.filter(s=>{
-    if(s.hp<=0){boom(s.x,s.y);boom(s.x+4,s.y-3);return false;}
+    if(s.hp<=0){boom(s.x,s.y);boom(s.x+4,s.y-3);if(s===controlled){controlled=null;selected=null;}return false;}
     if(s.retreating){const f=FRONTS[s.fi];const off=!f.vertical?(s.x<-90||s.x>W()+90):(s.y<-90||s.y>H()+90);if(off)respawn(s);}
     return true;
   });
@@ -478,7 +510,8 @@ function update(){
     else{
       const col=selected.faction==='blue'?'#4a9eff':'#ff6666';
       sel.style.display='block';
-      sel.innerHTML=`<b style="color:${col}">${selected.faction.toUpperCase()} #${selected.id}</b><br>${FRONTS[selected.fi].name}<br>${selected.state}<br>HP: ${Math.max(0,Math.round(selected.hp))}/${selected.mhp}`;
+      const ctrlBadge=selected===controlled?'<br><span style="color:#ffdd44;font-size:11px">🎮 ARROW KEYS / WASD</span>':'';
+      sel.innerHTML=`<b style="color:${col}">${selected.faction.toUpperCase()} #${selected.id}</b><br>${FRONTS[selected.fi].name}<br>${selected.state}${ctrlBadge}<br>HP: ${Math.max(0,Math.round(selected.hp))}/${selected.mhp}`;
     }
   }
 }
@@ -487,7 +520,9 @@ canvas.addEventListener('click',e=>{
   const mx=(e.clientX-r.left)*(canvas.width/r.width),my=(e.clientY-r.top)*(canvas.height/r.height);
   let best=null,bd=Infinity;
   for(const s of soldiers){const d=Math.hypot(s.x-mx,s.y-my);if(d<28&&d<bd){bd=d;best=s;}}
-  selected=best;document.getElementById('sel').style.display=best?'block':'none';
+  selected=best;
+  controlled=best; // take control with arrow keys
+  document.getElementById('sel').style.display=best?'block':'none';
 });
 document.getElementById('pb').addEventListener('click',()=>{paused=!paused;document.getElementById('pb').textContent=paused?'▶ Resume':'⏸ Pause';});
 document.getElementById('sb').addEventListener('click',wave);
