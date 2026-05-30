@@ -8,6 +8,9 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%;}
 #ctrls{position:absolute;bottom:8px;right:8px;display:flex;gap:6px;z-index:10;}
 .cb{background:rgba(0,0,0,0.7);color:#fff;border:0.5px solid rgba(255,255,255,0.35);padding:4px 10px;border-radius:4px;font:12px monospace;cursor:pointer;}
 .cb:hover{background:rgba(255,255,255,0.15);}
+.cb:disabled{opacity:0.4;cursor:not-allowed;}
+#airBtn{min-width:110px;}
+#reinforceBtn{min-width:130px;}
 #air-alert{position:absolute;top:40px;left:50%;transform:translateX(-50%);color:#fff;padding:5px 20px;border-radius:4px;font:bold 13px monospace;z-index:20;display:none;letter-spacing:2px;white-space:nowrap;}
 </style>
 <div id="ws">
@@ -22,7 +25,9 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%;}
 <div id="sel"></div>
 <div id="ctrls">
   <button class="cb" id="pb">⏸ Pause</button>
-  <button class="cb" id="sb">+ Wave</button>
+  <button class="cb" id="sb" style="display:none"></button>
+  <button class="cb" id="airBtn" style="border-color:#ffaa00;background:rgba(80,40,0,0.8);">✈ Airstrike</button>
+  <button class="cb" id="reinforceBtn" style="border-color:#44ff88;background:rgba(0,60,20,0.8);">⚔ Reinforce</button>
 </div>
 </div>
 <script>
@@ -39,6 +44,8 @@ resize();
 const W=()=>canvas.width, H=()=>canvas.height;
 
 let paused=false,tick=0,selected=null,nid=0,totalSorties=0;
+let reinforcementTicks=0; // counts down, doubles blue spawn while >0
+const REINFORCE_DURATION=400;
 const keys={};
 let controlled=null; // currently arrow-key controlled soldier
 document.addEventListener('keydown',e=>{
@@ -50,6 +57,15 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('keyup',e=>{ keys[e.key]=false; });
 let soldiers=[],bullets=[],fxArr=[],planes=[],bombs=[],craters=[];
+
+// Military bases — blue: top-left, red: bottom-right
+// Defined as fractions, resolved to px at draw/update time
+const BASES={
+  blue:{ fx:0.09, fy:0.10, label:'BLUE BASE', col:'#4a9eff', dark:'#1a3a6a' },
+  red: { fx:0.93, fy:0.88, label:'RED BASE',  col:'#ff4a4a', dark:'#6a1a1a' },
+};
+const BASE_RADIUS=55; // px, heal radius
+const HEAL_RATE=0.18; // hp/tick when inside base
 
 const terrainImg=new Image(); terrainImg.src=TERRAIN_SRC;
 const soldierImg=new Image(); soldierImg.src=SOLDIER_SRC;
@@ -239,6 +255,15 @@ function respawn(s){
   s.hp=s.mhp;s.retreating=false;s.state='advance';s.x=sp.x;s.y=sp.y;s.tx=tgt.tx;s.ty=tgt.ty;s.angle=sp.angle;s.vx=0;s.vy=0;
 }
 function updateSoldier(s){
+  // Heal if inside own base
+  {
+    const b=BASES[s.faction];
+    const bx=b.fx*W(), by=b.fy*H();
+    if(Math.hypot(s.x-bx,s.y-by)<BASE_RADIUS && s.hp<s.mhp){
+      s.hp=Math.min(s.mhp, s.hp+HEAL_RATE);
+    }
+  }
+
   // Arrow key control overrides AI movement (but not shooting)
   if(s===controlled){
     const CSPD=s.spd*1.1;
@@ -351,6 +376,138 @@ function drawCraters(){
     ctx.fillStyle=g;ctx.beginPath();ctx.arc(c.x,c.y,c.r,0,Math.PI*2);ctx.fill();ctx.restore();
   }
 }
+function drawBases(){
+  Object.entries(BASES).forEach(([faction,b])=>{
+    const bx=b.fx*W(), by=b.fy*H();
+    const R=BASE_RADIUS;
+    ctx.save();
+
+    // Strong shadow/ground plate
+    ctx.fillStyle=faction==='blue'?'rgba(0,20,80,0.72)':'rgba(80,0,0,0.72)';
+    ctx.fillRect(bx-R-4, by-R-4, (R+4)*2, (R+4)*2);
+
+    // Base ground (dirt/packed earth)
+    ctx.fillStyle=faction==='blue'?'rgba(20,50,130,0.55)':'rgba(130,20,20,0.55)';
+    ctx.fillRect(bx-R, by-R, R*2, R*2);
+
+    // Perimeter wall — thick solid
+    ctx.strokeStyle=b.col;
+    ctx.lineWidth=3;
+    ctx.globalAlpha=0.95;
+    ctx.strokeRect(bx-R, by-R, R*2, R*2);
+    ctx.globalAlpha=1;
+
+    // Corner guard towers
+    [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([dx,dy])=>{
+      ctx.fillStyle=b.col;
+      ctx.globalAlpha=0.9;
+      ctx.fillRect(bx+dx*R-5, by+dy*R-5, 10, 10);
+      ctx.globalAlpha=1;
+      ctx.strokeStyle='#fff'; ctx.lineWidth=0.5;
+      ctx.strokeRect(bx+dx*R-5, by+dy*R-5, 10, 10);
+    });
+
+    // Internal roads (cross pattern)
+    ctx.strokeStyle='rgba(200,180,120,0.5)'; ctx.lineWidth=5;
+    ctx.beginPath(); ctx.moveTo(bx-R,by); ctx.lineTo(bx+R,by); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bx,by-R); ctx.lineTo(bx,by+R); ctx.stroke();
+
+    // HQ building — large center
+    ctx.fillStyle='#ddd';
+    ctx.fillRect(bx-20, by-14, 40, 28);
+    ctx.fillStyle=b.dark;
+    ctx.globalAlpha=0.85;
+    ctx.fillRect(bx-20, by-14, 40, 28);
+    ctx.globalAlpha=1;
+    ctx.fillStyle='#e8e8e8';
+    ctx.fillRect(bx-17, by-11, 34, 22);
+    // HQ window grid
+    ctx.strokeStyle=b.dark; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(bx,by-11); ctx.lineTo(bx,by+11); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bx-17,by); ctx.lineTo(bx+17,by); ctx.stroke();
+
+    // Barracks — 3 rectangles on one side
+    for(let i=0;i<3;i++){
+      ctx.fillStyle='#ccc';
+      ctx.fillRect(bx-R+8, by-R+12+i*18, 26, 12);
+      ctx.fillStyle=b.col; ctx.globalAlpha=0.3;
+      ctx.fillRect(bx-R+8, by-R+12+i*18, 26, 12);
+      ctx.globalAlpha=1;
+      ctx.strokeStyle='#888'; ctx.lineWidth=0.5;
+      ctx.strokeRect(bx-R+8, by-R+12+i*18, 26, 12);
+    }
+
+    // Supply depot opposite side
+    ctx.fillStyle='#bbb';
+    ctx.fillRect(bx+R-38, by-R+10, 30, 22);
+    ctx.fillStyle=b.col; ctx.globalAlpha=0.25;
+    ctx.fillRect(bx+R-38, by-R+10, 30, 22);
+    ctx.globalAlpha=1;
+    ctx.strokeStyle='#777'; ctx.lineWidth=0.5;
+    ctx.strokeRect(bx+R-38, by-R+10, 30, 22);
+
+    // Vehicles (bottom row)
+    for(let i=0;i<4;i++){
+      ctx.fillStyle=b.col; ctx.globalAlpha=0.85;
+      ctx.fillRect(bx-R+8+i*22, by+R-22, 16, 10);
+      ctx.globalAlpha=1;
+    }
+
+    // Flag pole + flag
+    const fpx=bx+R-12, fpy=by-R+6;
+    ctx.strokeStyle='#ccc'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(fpx,fpy); ctx.lineTo(fpx,fpy+24); ctx.stroke();
+    ctx.fillStyle=b.col; ctx.globalAlpha=0.95;
+    ctx.fillRect(fpx, fpy, 16, 10);
+    ctx.globalAlpha=1;
+    // Flag X detail
+    ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(fpx,fpy); ctx.lineTo(fpx+16,fpy+10); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(fpx+16,fpy); ctx.lineTo(fpx,fpy+10); ctx.stroke();
+
+    // Pulsing heal aura
+    const pulse=Math.sin(tick*0.08)*0.25+0.45;
+    ctx.strokeStyle=b.col; ctx.lineWidth=2.5;
+    ctx.globalAlpha=pulse;
+    ctx.setLineDash([5,5]);
+    ctx.beginPath(); ctx.arc(bx,by,R+10,0,Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha=1;
+
+    // Label — big and clear
+    ctx.font='bold 13px monospace';
+    ctx.textAlign='center';
+    ctx.fillStyle='rgba(0,0,0,0.7)';
+    ctx.fillText(b.label, bx+1, by-R-10+1);
+    ctx.fillStyle=b.col;
+    ctx.fillText(b.label, bx, by-R-10);
+
+    ctx.font='10px monospace';
+    ctx.fillStyle='rgba(0,0,0,0.6)';
+    ctx.fillText('⚕ HEAL ZONE', bx+1, by+R+15+1);
+    ctx.fillStyle='rgba(255,255,255,0.85)';
+    ctx.fillText('⚕ HEAL ZONE', bx, by+R+15);
+
+    ctx.textAlign='left';
+    ctx.restore();
+  });
+}
+function drawBases_crosshairs(){
+  // Draw heal flash on soldiers inside base
+  soldiers.forEach(s=>{
+    const b=BASES[s.faction];
+    const bx=b.fx*W(), by=b.fy*H();
+    if(Math.hypot(s.x-bx,s.y-by)<BASE_RADIUS && s.hp<s.mhp){
+      ctx.save();
+      ctx.strokeStyle=b.col; ctx.lineWidth=1; ctx.globalAlpha=0.5;
+      ctx.beginPath(); ctx.arc(s.x,s.y,s.sz/2+5,0,Math.PI*2); ctx.stroke();
+      ctx.fillStyle='#ffffff'; ctx.globalAlpha=0.8; ctx.font='bold 10px monospace'; ctx.textAlign='center';
+      ctx.fillText('+', s.x, s.y-s.sz/2-3);
+      ctx.textAlign='left'; ctx.restore();
+    }
+  });
+}
+
 function drawFronts(){
   FRONTS.forEach(f=>{
     ctx.fillStyle=f.color;
@@ -459,7 +616,7 @@ function drawSoldiers(){
     const tc=getTinted(soldierImg,s.faction,'soldier_'+s.faction,s.faction);
     ctx.save();ctx.translate(s.x,s.y);ctx.rotate(s.angle-Math.PI/2);
     const h=s.sz/2;ctx.globalAlpha=s.retreating?0.42:0.94;
-    if(s===selected){ctx.shadowColor=s.faction==='blue'?'#4a9eff':'#ff5555';ctx.shadowBlur=14;}
+    if(s===selected){ctx.shadowColor='#ffffff';ctx.shadowBlur=22;}
     if(tc)ctx.drawImage(tc,-h,-h,s.sz,s.sz*1.7);
     else{ctx.fillStyle=s.faction==='blue'?'#4a9eff':'#ff4a4a';ctx.beginPath();ctx.arc(0,0,h,0,Math.PI*2);ctx.fill();}
     ctx.globalAlpha=1;ctx.restore();
@@ -467,12 +624,51 @@ function drawSoldiers(){
     ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(bx,by,bw,3);
     ctx.fillStyle=s.hp>60?'#44ee44':s.hp>22?'#ffcc00':'#ff3333';
     ctx.fillRect(bx,by,bw*(s.hp/s.mhp),3);
-    if(s===selected){ctx.strokeStyle=s.faction==='blue'?'#4a9eff':'#ff5555';ctx.lineWidth=1.5;ctx.setLineDash([3,2]);ctx.beginPath();ctx.arc(s.x,s.y,s.sz/2+8,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);}
+    if(s===selected){
+      // Outer glow ring
+      ctx.save();
+      ctx.shadowColor='#ffffff'; ctx.shadowBlur=18;
+      ctx.strokeStyle='#ffffff'; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.arc(s.x,s.y,s.sz/2+12,0,Math.PI*2); ctx.stroke();
+      ctx.restore();
+      // Spinning dashed indicator
+      ctx.save();
+      ctx.translate(s.x,s.y);
+      ctx.rotate(tick*0.05);
+      ctx.strokeStyle='#ffff00'; ctx.lineWidth=2.5; ctx.setLineDash([6,4]);
+      ctx.beginPath(); ctx.arc(0,0,s.sz/2+18,0,Math.PI*2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      // 4 corner brackets
+      ctx.save();
+      const bsz=s.sz/2+26;
+      const bl=10;
+      ctx.strokeStyle='#ffff00'; ctx.lineWidth=2.5;
+      [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(([dx,dy])=>{
+        const cx=s.x+dx*bsz, cy=s.y+dy*bsz;
+        ctx.beginPath(); ctx.moveTo(cx,cy-dy*bl); ctx.lineTo(cx,cy); ctx.lineTo(cx-dx*bl,cy); ctx.stroke();
+      });
+      ctx.restore();
+      // Controlled label above
+      if(s===controlled){
+        ctx.save();
+        ctx.font='bold 11px monospace';
+        ctx.textAlign='center';
+        ctx.fillStyle='rgba(0,0,0,0.7)';
+        ctx.fillRect(s.x-32,s.y-s.sz/2-34,64,16);
+        ctx.strokeStyle='#ffff00'; ctx.lineWidth=1;
+        ctx.strokeRect(s.x-32,s.y-s.sz/2-34,64,16);
+        ctx.fillStyle='#ffff00';
+        ctx.fillText('▶ YOU',s.x,s.y-s.sz/2-22);
+        ctx.textAlign='left';
+        ctx.restore();
+      }
+    }
   }
 }
 function draw(){
   ctx.clearRect(0,0,W(),H());
-  drawTerrain();drawCraters();drawFronts();
+  drawTerrain();drawCraters();drawBases();drawFronts();drawBases_crosshairs();
   drawFx();drawBombs();drawBullets();drawPlanes();drawSoldiers();
 }
 function update(){
@@ -485,9 +681,17 @@ function update(){
     FRONTS.forEach((_,fi)=>{
       const blueCount = soldiers.filter(s=>s.faction==='blue').length;
       const redCount  = soldiers.filter(s=>s.faction==='red').length;
-      const nb = Math.min(1+Math.floor(Math.random()*waveSize), maxSoldiers - blueCount);
+      const reinforceMulti = reinforcementTicks>0 ? 2 : 1;
+      const nb = Math.min((1+Math.floor(Math.random()*waveSize))*reinforceMulti, maxSoldiers - blueCount);
       const nr = Math.min(1+Math.floor(Math.random()*waveSize), maxSoldiers - redCount);
-      for(let i=0;i<nb;i++) soldiers.push(mkSoldier('blue',fi));
+      for(let i=0;i<nb;i++){
+        const s=mkSoldier('blue',fi);
+        if(reinforcementTicks>0){
+          // Reinforcements push deeper into enemy territory
+          s.tx=W()*(0.55+Math.random()*0.4);
+        }
+        soldiers.push(s);
+      }
       for(let i=0;i<nr;i++) soldiers.push(mkSoldier('red',fi));
     });
   }
@@ -504,13 +708,41 @@ function update(){
   document.getElementById('rc').textContent='🔴 Red: '+rl;
   document.getElementById('tc').textContent='T:'+tick;
   document.getElementById('ac').textContent='✈ Sorties: '+totalSorties;
+
+  // Tick down reinforcement
+  if(reinforcementTicks>0) reinforcementTicks--;
+
+  // Airstrike cooldown + button label
+  if(airCooldown>0){
+    airCooldown--;
+    const secs=Math.ceil(airCooldown/60);
+    airBtn.textContent=airCooldown>0?`✈ Airstrike (${secs}s)`:'✈ Airstrike';
+    if(airCooldown===0) airBtn.disabled=false;
+  }
+
+  // Reinforce cooldown + button label
+  if(reinforceCooldown>0){
+    reinforceCooldown--;
+    const secs=Math.ceil(reinforceCooldown/60);
+    if(reinforcementTicks>0){
+      const pct=Math.ceil((reinforcementTicks/REINFORCE_DURATION)*100);
+      reinforceBtn.textContent=`⚔ Reinforcing... ${pct}%`;
+      reinforceBtn.style.background='rgba(0,100,30,0.9)';
+    } else {
+      reinforceBtn.textContent=reinforceCooldown>0?`⚔ Reinforce (${secs}s)`:'⚔ Reinforce';
+      reinforceBtn.style.background='rgba(0,60,20,0.8)';
+    }
+    if(reinforceCooldown===0){ reinforceBtn.disabled=false; reinforceBtn.textContent='⚔ Reinforce'; }
+  }
   if(selected){
     const sel=document.getElementById('sel');
     if(!soldiers.includes(selected)){sel.style.display='none';selected=null;}
     else{
       const col=selected.faction==='blue'?'#4a9eff':'#ff6666';
       sel.style.display='block';
-      const ctrlBadge=selected===controlled?'<br><span style="color:#ffdd44;font-size:11px">🎮 ARROW KEYS / WASD</span>':'';
+      const ctrlBadge=selected===controlled
+        ?'<br><span style="color:#ffdd44;font-size:11px">🎮 ARROW KEYS / WASD</span>'
+        :(selected.faction==='red'?'<br><span style="color:#ff8888;font-size:10px">enemy unit</span>':'');
       sel.innerHTML=`<b style="color:${col}">${selected.faction.toUpperCase()} #${selected.id}</b><br>${FRONTS[selected.fi].name}<br>${selected.state}${ctrlBadge}<br>HP: ${Math.max(0,Math.round(selected.hp))}/${selected.mhp}`;
     }
   }
@@ -520,12 +752,49 @@ canvas.addEventListener('click',e=>{
   const mx=(e.clientX-r.left)*(canvas.width/r.width),my=(e.clientY-r.top)*(canvas.height/r.height);
   let best=null,bd=Infinity;
   for(const s of soldiers){const d=Math.hypot(s.x-mx,s.y-my);if(d<28&&d<bd){bd=d;best=s;}}
-  selected=best;
-  controlled=best; // take control with arrow keys
+  // Only blue soldiers are selectable/controllable
+  selected=(best&&best.faction==='blue')?best:null;
+  controlled=selected;
   document.getElementById('sel').style.display=best?'block':'none';
 });
 document.getElementById('pb').addEventListener('click',()=>{paused=!paused;document.getElementById('pb').textContent=paused?'▶ Resume':'⏸ Pause';});
-document.getElementById('sb').addEventListener('click',wave);
+
+// Airstrike button — player (blue) calls in 3 fighters on red soldiers
+const airBtn=document.getElementById('airBtn');
+const AIRSTRIKE_COOLDOWN=600;
+let airCooldown=0;
+airBtn.addEventListener('click',()=>{
+  if(airCooldown>0) return;
+  // Send 3 fighters targeting red soldiers
+  for(let i=0;i<3;i++){
+    setTimeout(()=>{ spawnPlane('blue','fighter'); }, i*400);
+  }
+  airCooldown=AIRSTRIKE_COOLDOWN;
+  airBtn.disabled=true;
+});
+
+// Reinforce button — doubles blue spawns for a duration
+const reinforceBtn=document.getElementById('reinforceBtn');
+const REINFORCE_COOLDOWN=900;
+let reinforceCooldown=0;
+reinforceBtn.addEventListener('click',()=>{
+  if(reinforceCooldown>0) return;
+  reinforcementTicks=REINFORCE_DURATION;
+  reinforceCooldown=REINFORCE_COOLDOWN;
+  reinforceBtn.disabled=true;
+  // Immediately spawn a surge wave of blue soldiers pushing deep
+  const maxS=Math.min(80,8+Math.floor(tick/30));
+  FRONTS.forEach((_,fi)=>{
+    const bc=soldiers.filter(s=>s.faction==='blue').length;
+    const count=Math.min(4, maxS-bc);
+    for(let i=0;i<count;i++){
+      const s=mkSoldier('blue',fi);
+      // Push target deep into enemy territory
+      s.tx=s.faction==='blue'?W()*(0.6+Math.random()*0.35):W()*(0.05+Math.random()*0.35);
+      soldiers.push(s);
+    }
+  });
+});
 wave();
 let lastTime=0;
 const STEP=1000/60; // fixed 60Hz timestep
