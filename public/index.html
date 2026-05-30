@@ -28,6 +28,7 @@ canvas{position:absolute;top:0;left:0;width:100%;height:100%;}
   <button class="cb" id="sb" style="display:none"></button>
   <button class="cb" id="airBtn" style="border-color:#ffaa00;background:rgba(80,40,0,0.8);">✈ Airstrike</button>
   <button class="cb" id="reinforceBtn" style="border-color:#44ff88;background:rgba(0,60,20,0.8);">⚔ Reinforce</button>
+  <button class="cb" id="medicBtn" style="border-color:#ff4444;background:rgba(80,0,0,0.85);">🚑 Medic</button>
 </div>
 </div>
 <script>
@@ -44,8 +45,11 @@ resize();
 const W=()=>canvas.width, H=()=>canvas.height;
 
 let paused=false,tick=0,selected=null,nid=0,totalSorties=0;
-let reinforcementTicks=0; // counts down, doubles blue spawn while >0
+let reinforcementTicks=0;
 const REINFORCE_DURATION=400;
+let medicCar=null; // {x,y,tx,ty,life,healing}
+const MEDIC_COOLDOWN=450;
+let medicCooldown=0;
 const keys={};
 let controlled=null; // currently arrow-key controlled soldier
 document.addEventListener('keydown',e=>{
@@ -90,9 +94,9 @@ const PLANE_TYPES={
 
 function airstrikeChance(){
   // No planes at all early on, ramp up gradually
-  if(tick < 100) return 0;
-  const t = tick - 100;
-  return Math.min(0.012, t * 0.000003);
+  if(tick < 500) return 0;
+  const t = tick - 500;
+  return Math.min(0.008, t * 0.0000012);
 }
 
 function showAlert(faction, ptype){
@@ -304,6 +308,152 @@ function updateSoldier(s){
   if(!f.vertical){const ymin=f.band[0]*H()+12,ymax=f.band[1]*H()-12;if(s.y<ymin){s.y=ymin;s.vy=Math.abs(s.vy)*0.4;}if(s.y>ymax){s.y=ymax;s.vy=-Math.abs(s.vy)*0.4;}}
   else{const xmin=f.band[0]*W()+12,xmax=f.band[1]*W()-12;if(s.x<xmin){s.x=xmin;s.vx=Math.abs(s.vx)*0.4;}if(s.x>xmax){s.x=xmax;s.vx=-Math.abs(s.vx)*0.4;}}
 }
+function updateMedicCar(){
+  if(!medicCar) return;
+  const m=medicCar;
+
+  // If target soldier is dead or gone, cancel
+  if(!soldiers.includes(m.target)){medicCar=null;return;}
+
+  // Follow target continuously
+  m.tx=m.target.x; m.ty=m.target.y;
+  const dx=m.tx-m.x, dy=m.ty-m.y;
+  const dist=Math.hypot(dx,dy)||1;
+
+  if(dist>18){
+    // Drive toward soldier
+    const spd=4.5;
+    m.x+=(dx/dist)*spd;
+    m.y+=(dy/dist)*spd;
+    m.angle=Math.atan2(dy,dx);
+    m.healing=false;
+  } else {
+    // Arrived — heal rapidly
+    m.healing=true;
+    m.target.hp=Math.min(m.target.mhp, m.target.hp+1.8);
+    if(m.target.hp>=m.target.mhp){
+      // Done healing — drive back to base then disappear
+      medicCar=null;
+    }
+  }
+  m.life--;
+  if(m.life<=0) medicCar=null;
+}
+
+function drawMedicCar(){
+  if(!medicCar) return;
+  const m=medicCar;
+  ctx.save();
+
+  // Trail
+  if(m.trail && m.trail.length>1){
+    ctx.beginPath();
+    ctx.moveTo(m.trail[0].x, m.trail[0].y);
+    m.trail.forEach(p=>ctx.lineTo(p.x,p.y));
+    ctx.strokeStyle='rgba(255,80,80,0.25)';
+    ctx.lineWidth=3; ctx.stroke();
+  }
+
+  ctx.translate(m.x, m.y);
+  ctx.rotate(m.angle + Math.PI/2); // nose of vehicle points in direction of travel
+
+  const W2=11, H2=18; // half-width, half-height of vehicle body
+
+  // ── Hull (olive/green armored body) ──
+  ctx.fillStyle='#5a6e2a';
+  // Main body with slightly tapered front
+  ctx.beginPath();
+  ctx.moveTo(-W2+2, -H2);   // front-left
+  ctx.lineTo( W2-2, -H2);   // front-right
+  ctx.lineTo( W2,   -H2+4); // shoulder
+  ctx.lineTo( W2,    H2-4); // rear-right
+  ctx.lineTo( W2-2,  H2);   // rear-right corner
+  ctx.lineTo(-W2+2,  H2);   // rear-left corner
+  ctx.lineTo(-W2,    H2-4);
+  ctx.lineTo(-W2,   -H2+4);
+  ctx.closePath();
+  ctx.fill();
+
+  // Hull panel lines
+  ctx.strokeStyle='#3d4d1a'; ctx.lineWidth=0.8;
+  ctx.strokeRect(-W2+1, -H2+1, (W2-1)*2, (H2-1)*2);
+
+  // ── Tracks (dark rectangles on sides) ──
+  ctx.fillStyle='#2a2a2a';
+  ctx.fillRect(-W2-4, -H2, 5, H2*2);   // left track
+  ctx.fillRect( W2-1, -H2, 5, H2*2);   // right track
+  // Track detail lines
+  ctx.fillStyle='#444';
+  for(let i=0;i<7;i++){
+    ctx.fillRect(-W2-4, -H2+i*5+1, 5, 2);
+    ctx.fillRect( W2-1, -H2+i*5+1, 5, 2);
+  }
+
+  // ── Turret base (round) ──
+  ctx.fillStyle='#6a7e32';
+  ctx.beginPath(); ctx.arc(0, 2, 7, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#3d4d1a'; ctx.lineWidth=0.8; ctx.stroke();
+
+  // ── Gun barrel (pointing forward/up) ──
+  ctx.fillStyle='#3a3a3a';
+  ctx.fillRect(-1.5, -H2-6, 3, 14);
+  // Barrel tip
+  ctx.fillStyle='#222';
+  ctx.fillRect(-2, -H2-8, 4, 4);
+
+  // ── RED CROSS on hull ──
+  ctx.fillStyle='#ff0000';
+  ctx.globalAlpha=0.92;
+  // Horizontal bar
+  ctx.fillRect(-6, 0, 12, 4);
+  // Vertical bar
+  ctx.fillRect(-2, -4, 4, 12);
+  ctx.globalAlpha=1;
+  // White outline for cross
+  ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=0.5;
+  ctx.strokeRect(-6, 0, 12, 4);
+  ctx.strokeRect(-2, -4, 4, 12);
+
+  // ── Flashing beacon on top ──
+  const flash = Math.sin(tick * 0.25) > 0;
+  ctx.fillStyle = flash ? '#ff2222' : '#ff8888';
+  ctx.beginPath(); ctx.arc(4, -8, 2.5, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = flash ? '#ffffff' : '#ffcccc';
+  ctx.globalAlpha=0.6;
+  ctx.beginPath(); ctx.arc(4, -8, 4.5, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha=1;
+
+  ctx.restore();
+
+  // ── Healing effect when at target ──
+  if(m.healing && m.target && soldiers.includes(m.target)){
+    const t=m.target;
+    const prog=t.hp/t.mhp;
+    const pulse=Math.sin(tick*0.2)*0.3+0.7;
+
+    // Outer pulsing ring
+    ctx.save();
+    ctx.globalAlpha=pulse*0.7;
+    ctx.strokeStyle='#ff4444'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(t.x,t.y,t.sz/2+12,0,Math.PI*2); ctx.stroke();
+    // HP progress arc in green
+    ctx.strokeStyle='#44ff88'; ctx.lineWidth=3;
+    ctx.beginPath();
+    ctx.arc(t.x,t.y,t.sz/2+12,-Math.PI/2,-Math.PI/2+Math.PI*2*prog);
+    ctx.stroke();
+    ctx.globalAlpha=1;
+    // Floating + signs
+    if(tick%8<4){
+      ctx.font='bold 13px monospace'; ctx.textAlign='center';
+      ctx.fillStyle='#44ff88';
+      ctx.fillText('+', t.x+Math.sin(tick*0.3)*14, t.y-t.sz-4-(tick%30)*0.5);
+    }
+    ctx.textAlign='left';
+    ctx.restore();
+  }
+}
+
+
 function updateBullets(){
   bullets=bullets.filter(b=>{
     b.trail.push({x:b.x,y:b.y});if(b.trail.length>5)b.trail.shift();
@@ -669,7 +819,7 @@ function drawSoldiers(){
 function draw(){
   ctx.clearRect(0,0,W(),H());
   drawTerrain();drawCraters();drawBases();drawFronts();drawBases_crosshairs();
-  drawFx();drawBombs();drawBullets();drawPlanes();drawSoldiers();
+  drawFx();drawBombs();drawBullets();drawPlanes();drawMedicCar();drawSoldiers();
 }
 function update(){
   if(paused)return;tick++;
@@ -695,7 +845,7 @@ function update(){
       for(let i=0;i<nr;i++) soldiers.push(mkSoldier('red',fi));
     });
   }
-  soldiers.forEach(updateSoldier);updateBullets();updatePlanes();
+  soldiers.forEach(updateSoldier);updateBullets();updatePlanes();updateMedicCar();
   // Cap enforced at spawn, not by silent removal — nothing here
   soldiers=soldiers.filter(s=>{
     if(s.hp<=0){boom(s.x,s.y);boom(s.x+4,s.y-3);if(s===controlled){controlled=null;selected=null;}return false;}
@@ -711,6 +861,21 @@ function update(){
 
   // Tick down reinforcement
   if(reinforcementTicks>0) reinforcementTicks--;
+
+  // Medic car trail
+  if(medicCar){
+    if(!medicCar.trail) medicCar.trail=[];
+    medicCar.trail.push({x:medicCar.x,y:medicCar.y});
+    if(medicCar.trail.length>18) medicCar.trail.shift();
+  }
+
+  // Medic cooldown
+  if(medicCooldown>0){
+    medicCooldown--;
+    const secs=Math.ceil(medicCooldown/60);
+    medicBtn.textContent=medicCooldown>0?`🚑 Medic (${secs}s)`:'🚑 Medic';
+    if(medicCooldown===0){medicBtn.disabled=false;medicBtn.textContent='🚑 Medic';}
+  }
 
   // Airstrike cooldown + button label
   if(airCooldown>0){
@@ -795,6 +960,33 @@ reinforceBtn.addEventListener('click',()=>{
     }
   });
 });
+
+// Medic car button
+const medicBtn=document.getElementById('medicBtn');
+medicBtn.addEventListener('click',()=>{
+  if(medicCooldown>0) return;
+  if(!selected || selected.faction!=='blue'){
+    medicBtn.textContent='🚑 Select blue soldier!';
+    setTimeout(()=>{ medicBtn.disabled=false; medicBtn.textContent='🚑 Medic'; },1500);
+    return;
+  }
+  if(selected.hp>=selected.mhp){
+    medicBtn.textContent='🚑 Already full HP';
+    setTimeout(()=>{ medicBtn.textContent='🚑 Medic'; },1500);
+    return;
+  }
+  // Spawn medic car from blue base
+  const b=BASES['blue'];
+  medicCar={
+    x:b.fx*W(), y:b.fy*H(),
+    target:selected,
+    angle:0, life:900,
+    healing:false, trail:[]
+  };
+  medicCooldown=MEDIC_COOLDOWN;
+  medicBtn.disabled=true;
+});
+
 wave();
 let lastTime=0;
 const STEP=1000/60; // fixed 60Hz timestep
