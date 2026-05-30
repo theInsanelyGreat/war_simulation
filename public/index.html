@@ -64,9 +64,9 @@ const PLANE_TYPES={
 
 function airstrikeChance(){
   // No planes at all early on, ramp up gradually
-  if(tick < 300) return 0;
-  const t = tick - 300;
-  return Math.min(0.008, t * 0.0000005);
+  if(tick < 100) return 0;
+  const t = tick - 100;
+  return Math.min(0.012, t * 0.000003);
 }
 
 function showAlert(faction, ptype){
@@ -184,7 +184,7 @@ function mkTarget(faction,fi,fromX,fromY){
 }
 function mkSoldier(faction,fi){
   const sp=spawnPos(faction,fi),tgt=mkTarget(faction,fi,sp.x,sp.y);
-  return{id:nid++,faction,fi,x:sp.x,y:sp.y,tx:tgt.tx,ty:tgt.ty,vx:0,vy:0,hp:100,mhp:100,spd:1.8+Math.random()*1.2,fr:65+Math.floor(Math.random()*55),fc:Math.floor(Math.random()*65),state:'advance',retreating:false,angle:sp.angle,sz:20+Math.random()*5};
+  return{id:nid++,faction,fi,x:sp.x,y:sp.y,tx:tgt.tx,ty:tgt.ty,vx:0,vy:0,hp:100,mhp:100,spd:1.53+Math.random()*1.02,fr:65+Math.floor(Math.random()*55),fc:Math.floor(Math.random()*65),state:'advance',retreating:false,angle:sp.angle,sz:20+Math.random()*5};
 }
 
 const tintCache={};
@@ -201,7 +201,7 @@ function getTinted(img, faction, key, tintStr){
 }
 
 function wave(){
-  const maxS = Math.min(80, 8 + Math.floor(tick/120));
+  const maxS = Math.min(80, 8 + Math.floor(tick/30));
   FRONTS.forEach((_,fi)=>{
     const bc = soldiers.filter(s=>s.faction==='blue').length;
     const rc = soldiers.filter(s=>s.faction==='red').length;
@@ -446,10 +446,10 @@ function draw(){
 function update(){
   if(paused)return;tick++;
   // Wave frequency and size scale with time
-  const maxSoldiers = Math.min(80, 8 + Math.floor(tick/120));
-  const waveInterval = Math.max(80, 400 - Math.floor(tick/60)*8);
+  const maxSoldiers = Math.min(80, 8 + Math.floor(tick/30));
+  const waveInterval = Math.max(40, 200 - Math.floor(tick/30)*8);
   if(tick % waveInterval === 0) {
-    const waveSize = Math.min(4, 1 + Math.floor(tick/800));
+    const waveSize = Math.min(5, 1 + Math.floor(tick/200));
     FRONTS.forEach((_,fi)=>{
       const blueCount = soldiers.filter(s=>s.faction==='blue').length;
       const redCount  = soldiers.filter(s=>s.faction==='red').length;
