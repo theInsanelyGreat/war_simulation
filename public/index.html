@@ -1,5 +1,5 @@
 <style>
-#ws{position:relative;width:100%;height:590px;overflow:hidden;border-radius:8px;}
+#ws{position:fixed;top:0;left:0;width:100vw;height:100vh;overflow:hidden;}
 canvas{position:absolute;top:0;left:0;width:100%;height:100%;}
 #hud{position:absolute;top:8px;left:8px;z-index:10;display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
 .hp{background:rgba(0,0,0,0.7);color:#fff;padding:3px 10px;border-radius:4px;font:12px monospace;border-left:3px solid #555;}
@@ -34,7 +34,7 @@ const BOMBER_SRC='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACO
 const canvas=document.getElementById('wc');
 const ctx=canvas.getContext('2d');
 const wrap=document.getElementById('ws');
-function resize(){canvas.width=wrap.offsetWidth;canvas.height=wrap.offsetHeight;}
+function resize(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;}
 resize();
 const W=()=>canvas.width, H=()=>canvas.height;
 
@@ -58,8 +58,8 @@ const FRONTS=[
 // 'bomber'  = new heavy bomber — slow, standard blast radius (130px), drops 3 bombs in sequence
 
 const PLANE_TYPES={
-  fighter:{ sz:38, spd:3.2, blastRadius:380, bombCount:1, bombInterval:0, angleOffset:Math.PI/4 },
-  bomber: { sz:28, spd:1.6, blastRadius:130, bombCount:1, bombInterval:0,  angleOffset:Math.PI/2 },
+  fighter:{ sz:38, spd:7, blastRadius:380, bombCount:1, bombInterval:0, angleOffset:Math.PI/4 },
+  bomber: { sz:28, spd:3.5, blastRadius:130, bombCount:1, bombInterval:0,  angleOffset:Math.PI/2 },
 };
 
 function airstrikeChance(){
@@ -95,7 +95,7 @@ function spawnPlane(faction, ptype){
 
   const pt=PLANE_TYPES[ptype];
   const angle=Math.atan2(ty-sy,tx-sx);
-  const spd=pt.spd+Math.random()*0.5;
+  const spd=pt.spd+Math.random()*1.2;
 
   planes.push({
     faction, ptype, x:sx, y:sy,
@@ -111,14 +111,14 @@ function spawnPlane(faction, ptype){
 function spawnBomb(plane, targetX, targetY, blastRadius){
   const dx=targetX-plane.x, dy=targetY-plane.y;
   const dist=Math.hypot(dx,dy)||1;
-  const speed=3.5;
+  const speed=7;
   bombs.push({
     x:plane.x, y:plane.y,
     vx:(dx/dist)*speed*0.9,
     vy:(dy/dist)*speed*0.5 - 1.5,
     tx:targetX, ty:targetY,
     faction:plane.faction,
-    gravity:0.12, life:120, maxLife:120,
+    gravity:0.25, life:120, maxLife:120,
     trail:[], sz:10,
     blastRadius,
   });
@@ -150,7 +150,7 @@ function detonateBomb(b){
   // Sparks/debris — more for bigger bombs
   const sparkCount=Math.round(35*Math.sqrt(fb));
   for(let i=0;i<sparkCount;i++){
-    const a=Math.random()*Math.PI*2, spd=2+Math.random()*6*fb;
+    const a=Math.random()*Math.PI*2, spd=3+Math.random()*9*fb;
     fxArr.push({x:b.x,y:b.y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd-2,r:2+Math.random()*3,life:40+Math.floor(Math.random()*30),ml:70,type:'spark',col:Math.random()<0.5?'#ffcc44':'#ff6600'});
   }
 
@@ -184,7 +184,7 @@ function mkTarget(faction,fi,fromX,fromY){
 }
 function mkSoldier(faction,fi){
   const sp=spawnPos(faction,fi),tgt=mkTarget(faction,fi,sp.x,sp.y);
-  return{id:nid++,faction,fi,x:sp.x,y:sp.y,tx:tgt.tx,ty:tgt.ty,vx:0,vy:0,hp:100,mhp:100,spd:0.55+Math.random()*0.4,fr:65+Math.floor(Math.random()*55),fc:Math.floor(Math.random()*65),state:'advance',retreating:false,angle:sp.angle,sz:20+Math.random()*5};
+  return{id:nid++,faction,fi,x:sp.x,y:sp.y,tx:tgt.tx,ty:tgt.ty,vx:0,vy:0,hp:100,mhp:100,spd:1.8+Math.random()*1.2,fr:65+Math.floor(Math.random()*55),fc:Math.floor(Math.random()*65),state:'advance',retreating:false,angle:sp.angle,sz:20+Math.random()*5};
 }
 
 const tintCache={};
@@ -218,7 +218,7 @@ function nearestEnemy(s){
 }
 function shoot(from,to){
   const a=Math.atan2(to.y-from.y,to.x-from.x)+(Math.random()-0.5)*0.14;
-  bullets.push({x:from.x,y:from.y,vx:Math.cos(a)*5.5,vy:Math.sin(a)*5.5,faction:from.faction,life:75,trail:[]});
+  bullets.push({x:from.x,y:from.y,vx:Math.cos(a)*8,vy:Math.sin(a)*8,faction:from.faction,life:75,trail:[]});
 }
 function boom(x,y){
   for(let i=0;i<5;i++){const a=Math.random()*Math.PI*2,spd=1+Math.random()*2;fxArr.push({x,y,vx:Math.cos(a)*spd,vy:Math.sin(a)*spd,r:2.5,life:18,ml:18,type:'spark',col:'#ffaa44'});}
@@ -492,10 +492,19 @@ canvas.addEventListener('click',e=>{
 document.getElementById('pb').addEventListener('click',()=>{paused=!paused;document.getElementById('pb').textContent=paused?'▶ Resume':'⏸ Pause';});
 document.getElementById('sb').addEventListener('click',wave);
 wave();
-function loop(){update();draw();requestAnimationFrame(loop);}
+let lastTime=0;
+const STEP=1000/60; // fixed 60Hz timestep
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min(now-lastTime, 100); // cap at 100ms to avoid spiral of death
+  lastTime=now;
+  let steps=Math.round(dt/STEP);
+  for(let i=0;i<steps;i++) update();
+  draw();
+}
 function tryStart(){
   if(terrainImg.complete&&terrainImg.naturalWidth&&soldierImg.complete&&soldierImg.naturalWidth&&fighterImg.complete&&fighterImg.naturalWidth&&bomberImg.complete&&bomberImg.naturalWidth){
-    loop();
+    requestAnimationFrame(loop);
   }else setTimeout(tryStart,40);
 }
 tryStart();
