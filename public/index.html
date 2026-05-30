@@ -173,6 +173,7 @@ const ENTITY_IDS = {
   'base_red':  'BASE_RED',
   'medic_0':   'MEDIC_0',
   'medic_1':   'MEDIC_1',
+  'medic_2':   'MEDIC_2',
 };
 
 // ── Master world state snapshot — call this to get full context for AI ──
@@ -590,7 +591,7 @@ function updateSoldier(s){
 }
 function idlePos(m){
   // Parking spots just inside blue base area, staggered
-  return { x: BASES.blue.fx*W()+30+m.idx*48, y: BASES.blue.fy*H()+BASE_RADIUS*0.6+m.idx*22 };
+  return { x: BASES.blue.fx*W()+28+m.idx*36, y: BASES.blue.fy*H()+BASE_RADIUS*0.6+m.idx*20 };
 }
 
 function updateMedics(){
@@ -1291,7 +1292,7 @@ function loop(now){
 }
 function tryStart(){
   if(terrainImg.complete&&terrainImg.naturalWidth&&soldierImg.complete&&soldierImg.naturalWidth&&fighterImg.complete&&fighterImg.naturalWidth&&bomberImg.complete&&bomberImg.naturalWidth){
-    medics=[makeMedic(0),makeMedic(1)];
+    medics=[makeMedic(0),makeMedic(1),makeMedic(2)];
     requestAnimationFrame(loop);
   }else setTimeout(tryStart,40);
 }
